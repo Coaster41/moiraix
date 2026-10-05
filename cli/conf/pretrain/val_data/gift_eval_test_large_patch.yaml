@@ -1,0 +1,13 @@
+# gift_eval_test minus the datasets whose series are too short to yield 2 patches
+# at a large patch size (m4_yearly, solar/W, car_parts_with_missing) — see
+# GIFT_EVAL_SHORT_SERIES_DATASETS in gift_eval_test.py. Use this val set for runs
+# with model.module_kwargs.patch_size > 16; with the default gift_eval_test the
+# val dataloader raises `max_patches=1 < min_time_patches=2` during sanity check.
+_target_: moiraix.data.builder.ConcatDatasetBuilder
+_args_:
+  - _target_: moiraix.data.builder.lotsa_v1.GiftEvalTestDatasetBuilder
+    datasets: ${cls_getattr:${._target_},large_patch_dataset_list}
+    weight_map: ${cls_getattr:${._target_},default_weight_map}
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["none"]

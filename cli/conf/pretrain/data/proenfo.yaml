@@ -1,0 +1,2 @@
+_target_: moiraix.data.builder.lotsa_v1.ProEnFoDatasetBuilder
+datasets: ${cls_getattr:${._target_},dataset_list}

@@ -1,0 +1,225 @@
+#  Copyright (c) 2024, Salesforce, Inc.
+#  SPDX-License-Identifier: Apache-2
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+from functools import partial
+from typing import Callable, Optional
+
+import hydra
+import lightning as L
+import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig
+from torch.utils._pytree import tree_map
+from torch.utils.data import Dataset, DistributedSampler
+import os
+
+from moiraix.common import hydra_util  # noqa: hydra resolvers
+from moiraix.common.legacy import install_uni2ts_aliases
+from moiraix.data.loader import DataLoader
+
+
+class DataModule(L.LightningDataModule):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        train_dataset: Dataset,
+        val_dataset: Optional[Dataset | list[Dataset]],
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.train_dataset = train_dataset
+
+        if val_dataset is not None:
+            self.val_dataset = val_dataset
+            self.val_dataloader = self._val_dataloader
+
+    @staticmethod
+    def get_dataloader(
+        dataset: Dataset,
+        dataloader_func: Callable[..., DataLoader],
+        shuffle: bool,
+        world_size: int,
+        batch_size: int,
+        num_batches_per_epoch: Optional[int] = None,
+    ) -> DataLoader:
+        sampler = (
+            DistributedSampler(
+                dataset,
+                num_replicas=None,
+                rank=None,
+                shuffle=shuffle,
+                seed=0,
+                drop_last=False,
+            )
+            if world_size > 1
+            else None
+        )
+        return dataloader_func(
+            dataset=dataset,
+            shuffle=shuffle if sampler is None else None,
+            sampler=sampler,
+            batch_size=batch_size,
+            num_batches_per_epoch=num_batches_per_epoch,
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        return self.get_dataloader(
+            self.train_dataset,
+            instantiate(self.cfg.train_dataloader, _partial_=True),
+            self.cfg.train_dataloader.shuffle,
+            self.trainer.world_size,
+            self.train_batch_size,
+            num_batches_per_epoch=self.train_num_batches_per_epoch,
+        )
+
+    def _val_dataloader(self) -> DataLoader | list[DataLoader]:
+        return tree_map(
+            partial(
+                self.get_dataloader,
+                dataloader_func=instantiate(self.cfg.val_dataloader, _partial_=True),
+                shuffle=self.cfg.val_dataloader.shuffle,
+                world_size=self.trainer.world_size,
+                batch_size=self.val_batch_size,
+                num_batches_per_epoch=None,
+            ),
+            self.val_dataset,
+        )
+
+    @property
+    def train_batch_size(self) -> int:
+        return self.cfg.train_dataloader.batch_size // (
+            self.trainer.world_size * self.trainer.accumulate_grad_batches
+        )
+
+    @property
+    def val_batch_size(self) -> int:
+        return self.cfg.val_dataloader.batch_size // (
+            self.trainer.world_size * self.trainer.accumulate_grad_batches
+        )
+
+    @property
+    def train_num_batches_per_epoch(self) -> int:
+        if self.cfg.train_dataloader.num_batches_per_epoch is not None:  # Pretraining
+            return (
+                self.cfg.train_dataloader.num_batches_per_epoch
+                * self.trainer.accumulate_grad_batches
+            )
+
+        else:  # Fine-tuning
+            return None
+
+
+@hydra.main(version_base="1.3", config_name="default.yaml")
+def main(cfg: DictConfig):
+    # --- Capture Hydra runtime info early, before Lightning spawns DDP workers ---
+    from hydra.core.hydra_config import HydraConfig
+    try:
+        output_dir = HydraConfig.get().runtime.output_dir
+    except ValueError:
+        # Fallback when the script is re-entered by a DDP subprocess
+        output_dir = os.getcwd()
+
+    if cfg.tf32:
+        assert cfg.trainer.precision in [32, "bf16-mixed"]
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("high")
+
+    model: L.LightningModule = instantiate(cfg.model, _convert_="all")
+
+    # For fine-tuning wo using sequence packing, create 'sample_id' for each sample by transformation.
+    if "collate_fn" not in cfg.train_dataloader:
+        model.seq_fields = model.seq_fields + ("sample_id",)
+
+    if cfg.compile:
+        model.module.compile(mode=cfg.compile)
+    trainer: L.Trainer = instantiate(cfg.trainer)
+
+    # The '=' in the checkpoint name prevents direct loading with Hydra. Replace it with '_'."
+    trainer.callbacks[-1].CHECKPOINT_EQUALS_CHAR = "_"
+    trainer.callbacks[-2].CHECKPOINT_EQUALS_CHAR = "_"
+
+    train_dataset: Dataset = instantiate(cfg.data).load_dataset(
+        model.train_transform_map
+    )
+    val_dataset: Optional[Dataset | list[Dataset]] = (
+        tree_map(
+            lambda ds: ds.load_dataset(model.val_transform_map),
+            instantiate(cfg.val_data, _convert_="all"),
+        )
+        if "val_data" in cfg
+        else None
+    )
+    # L.seed_everything(cfg.seed + trainer.logger.version, workers=True)
+    logger_version = trainer.logger.version
+    if isinstance(logger_version, str):
+        # Hash the string version to get a deterministic int
+        logger_version = hash(logger_version) % 10000
+    L.seed_everything(cfg.seed + logger_version, workers=True)
+
+    # Print the training info during fine-tuning
+    if "collate_fn" not in cfg.train_dataloader:
+        print(
+            "Number of windows in finetune: ",
+            train_dataset.dataset_weight * train_dataset.num_ts,
+        )
+        print("Batch size for finetune: ", cfg.train_dataloader.batch_size)
+        print(
+            "Number of batches in a epoch: ",
+            train_dataset.dataset_weight
+            * train_dataset.num_ts
+            // cfg.train_dataloader.batch_size,
+        )
+
+        print(
+            "Number of windows in val: ",
+            val_dataset.dataset_weight * val_dataset.num_ts,
+        )
+        print("Batch size for val: ", cfg.val_dataloader.batch_size)
+        print(
+            "Number of batches in a epoch: ",
+            val_dataset.dataset_weight
+            * val_dataset.num_ts
+            // cfg.val_dataloader.batch_size,
+        )
+
+    # Validate before training, check the performance of original pretrained model.
+    # trainer.validate(model, datamodule=DataModule(cfg, train_dataset, val_dataset))
+
+    if cfg.ckpt_path:
+        # .ckpt files from the uni2ts repo pickle uni2ts.* class paths.
+        install_uni2ts_aliases()
+
+    trainer.fit(
+        model,
+        datamodule=DataModule(cfg, train_dataset, val_dataset),
+        ckpt_path=cfg.ckpt_path,
+    )
+
+    metric_name = "val/PackedQuantileEncoderMAELoss_epoch"
+    best_val = trainer.callback_metrics.get(metric_name)
+    if trainer.is_global_zero and best_val is not None:
+        metric_path = os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+            "best_val_metric.txt",
+        )
+        with open(metric_path, "w") as f:
+            f.write(str(float(best_val)))
+
+    # Optuna objective
+    return float(best_val) if best_val is not None else float("inf")
+
+if __name__ == "__main__":
+    main()

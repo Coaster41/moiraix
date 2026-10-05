@@ -1,0 +1,245 @@
+#  Copyright (c) 2024, Salesforce, Inc.
+#  SPDX-License-Identifier: Apache-2
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+from functools import partial
+from typing import Optional
+
+import pytest
+import torch
+from torch import nn
+
+from moiraix.module.attention import (
+    GroupedQueryAttention,
+    MultiHeadAttention,
+    MultiQueryAttention,
+    native_scaled_dot_product_attention,
+)
+
+
+@pytest.mark.parametrize("batch_shape", [tuple(), (2,)])
+@pytest.mark.parametrize("dim", [64, 384])
+@pytest.mark.parametrize("kv_len", [1, 10])
+@pytest.mark.parametrize("q_len", [10])
+@pytest.mark.parametrize("use_attn_mask", [False, True])
+@pytest.mark.parametrize(
+    "num_heads, num_groups",
+    [
+        (8, 8),
+        (8, 1),
+        (8, 2),
+    ],
+)
+@pytest.mark.parametrize(
+    "norm_layer", [None, nn.LayerNorm, partial(nn.LayerNorm, bias=False)]
+)
+@pytest.mark.parametrize("softmax_scale", [None, 0.1])
+@pytest.mark.parametrize("attn_dropout_p", [0.15])
+def test_gqa(
+    batch_shape: tuple[int, ...],
+    dim: int,
+    kv_len: int,
+    q_len: int,
+    use_attn_mask: bool,
+    num_heads: int,
+    num_groups: int,
+    norm_layer: Optional[nn.Module],
+    softmax_scale: Optional[float],
+    attn_dropout_p: float,
+):
+    attn = GroupedQueryAttention(
+        dim=dim,
+        num_heads=num_heads,
+        num_groups=num_groups,
+        bias=True,
+        norm_layer=norm_layer,
+        softmax_scale=softmax_scale,
+        attn_dropout_p=0.0,
+    )
+
+    query = torch.randn(*(batch_shape + (q_len, dim)))
+    key = torch.randn(*(batch_shape + (kv_len, dim)))
+    value = torch.randn(*(batch_shape + (kv_len, dim)))
+
+    attn_mask = (
+        torch.ones(*(batch_shape + (q_len, kv_len)), dtype=torch.bool)
+        if use_attn_mask
+        else None
+    )
+
+    out = attn(query, key, value, attn_mask=attn_mask)
+    assert out.shape == batch_shape + (q_len, dim)
+    assert not out.isnan().any()
+
+
+def test_all_masked(
+    batch_shape: tuple[int, ...] = tuple(),
+    dim: int = 384,
+    q_len: int = 10,
+    kv_len: int = 10,
+):
+    attn = GroupedQueryAttention(
+        dim=dim,
+        num_heads=8,
+        num_groups=2,
+        bias=True,
+    )
+
+    query = torch.randn(*(batch_shape + (q_len, dim)))
+    key = torch.randn(*(batch_shape + (kv_len, dim)))
+    value = torch.randn(*(batch_shape + (kv_len, dim)))
+
+    attn_mask = torch.zeros(*(batch_shape + (q_len, kv_len)), dtype=torch.bool)
+    out = attn(query, key, value, attn_mask=attn_mask)
+    assert torch.isnan(out).all()
+
+
+def test_mqa(
+    batch_shape: tuple[int, ...] = (2,),
+    dim: int = 384,
+    q_len: int = 10,
+    kv_len: int = 10,
+):
+    torch.manual_seed(0)
+    gqa = GroupedQueryAttention(
+        dim=dim,
+        num_heads=6,
+        num_groups=1,
+        bias=True,
+        norm_layer=None,
+        softmax_scale=None,
+        attn_dropout_p=0.0,
+    )
+    torch.manual_seed(0)
+    mqa = MultiQueryAttention(
+        dim=dim,
+        num_heads=6,
+        bias=True,
+        norm_layer=None,
+        softmax_scale=None,
+        attn_dropout_p=0.0,
+    )
+    query = torch.randn(*(batch_shape + (q_len, dim)))
+    key = torch.randn(*(batch_shape + (kv_len, dim)))
+    value = torch.randn(*(batch_shape + (kv_len, dim)))
+
+    assert torch.eq(gqa(query, key, value), mqa(query, key, value)).all()
+
+
+def test_mha(
+    batch_shape: tuple[int, ...] = (2,),
+    dim: int = 384,
+    q_len: int = 10,
+    kv_len: int = 10,
+):
+    torch.manual_seed(0)
+    gqa = GroupedQueryAttention(
+        dim=dim,
+        num_heads=6,
+        num_groups=6,
+        bias=True,
+        norm_layer=None,
+        softmax_scale=None,
+        attn_dropout_p=0.0,
+    )
+    torch.manual_seed(0)
+    mha = MultiHeadAttention(
+        dim=dim,
+        num_heads=6,
+        bias=True,
+        norm_layer=None,
+        softmax_scale=None,
+        attn_dropout_p=0.0,
+    )
+    query = torch.randn(*(batch_shape + (q_len, dim)))
+    key = torch.randn(*(batch_shape + (kv_len, dim)))
+    value = torch.randn(*(batch_shape + (kv_len, dim)))
+
+    assert torch.eq(gqa(query, key, value), mha(query, key, value)).all()
+
+
+@pytest.mark.parametrize("batch_shape", [tuple(), (2,)])
+@pytest.mark.parametrize("num_heads,num_groups", [(1, 1), (8, 8), (8, 2), (8, 1)])
+@pytest.mark.parametrize("use_attn_mask", [False, True])
+def test_native_matches_builtin(
+    batch_shape: tuple[int, ...],
+    num_heads: int,
+    num_groups: int,
+    use_attn_mask: bool,
+    dim: int = 128,
+    q_len: int = 10,
+    kv_len: int = 12,
+):
+    """return_attn_weights=True (native softmax path) must produce identical output to
+    the default F.scaled_dot_product_attention path."""
+    torch.manual_seed(0)
+    attn = GroupedQueryAttention(
+        dim=dim,
+        num_heads=num_heads,
+        num_groups=num_groups,
+        bias=True,
+        norm_layer=None,
+        softmax_scale=None,
+        attn_dropout_p=0.0,  # must be 0 so both paths are deterministic
+    ).eval()
+
+    query = torch.randn(*(batch_shape + (q_len, dim)))
+    key = torch.randn(*(batch_shape + (kv_len, dim)))
+    value = torch.randn(*(batch_shape + (kv_len, dim)))
+    attn_mask = (
+        torch.ones(*(batch_shape + (q_len, kv_len)), dtype=torch.bool)
+        if use_attn_mask
+        else None
+    )
+
+    with torch.no_grad():
+        out_builtin = attn(query, key, value, attn_mask=attn_mask)
+        out_native, attn_weights = attn(
+            query, key, value, attn_mask=attn_mask, return_attn_weights=True
+        )
+
+    # Outputs must be numerically identical
+    assert torch.allclose(out_builtin, out_native, atol=1e-5), (
+        f"Max diff: {(out_builtin - out_native).abs().max().item()}"
+    )
+    # Weights must have correct shape
+    expected_weight_shape = batch_shape + (num_heads, q_len, kv_len)
+    assert attn_weights.shape == expected_weight_shape
+    # Weights must be non-negative (post-softmax)
+    assert (attn_weights >= 0).all()
+
+
+@pytest.mark.parametrize("use_attn_mask", [False, True])
+def test_native_sdpa_matches_builtin(use_attn_mask: bool):
+    """native_scaled_dot_product_attention must match F.scaled_dot_product_attention."""
+    import torch.nn.functional as F
+
+    torch.manual_seed(1)
+    # Shape: [batch, group, hpg, seq, head_dim]
+    q = torch.randn(2, 4, 2, 10, 16)
+    k = torch.randn(2, 4, 2, 12, 16)
+    v = torch.randn(2, 4, 2, 12, 16)
+    mask = (
+        torch.ones(2, 1, 1, 10, 12, dtype=torch.bool) if use_attn_mask else None
+    )
+
+    with torch.no_grad():
+        out_builtin = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0)
+        out_native, weights = native_scaled_dot_product_attention(
+            q, k, v, attn_mask=mask, dropout_p=0.0, return_attn_weights=True
+        )
+
+    assert torch.allclose(out_builtin, out_native, atol=1e-5), (
+        f"Max diff: {(out_builtin - out_native).abs().max().item()}"
+    )

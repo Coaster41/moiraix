@@ -1,0 +1,65 @@
+# Mode A (HANDOFF_SPREAD_HEAD.md §7.A): graft a spread head onto an existing
+# checkpoint and train ONLY the head, trunk frozen. Cheap de-risking run
+# before committing to a full Mode-B pretrain (moiraix_encoder_spread.yaml).
+#
+# Run through the *pretrain* CLI entry point, not finetune -- MoiraiXPretrain
+# is reused as-is (it accepts a prebuilt `module`), and the data/val_data
+# groups below (the exact recipe of the checkpoint being grafted onto) only
+# resolve under `-cp conf/pretrain`:
+#   torchrun -m cli.train -cp conf/pretrain run_name=my_run model=moiraix_spread_headonly \
+#     data=gift_eval_pretrain_trackb_p30_nosde_gift val_data=gift_eval_test
+#
+# Before launching, run scripts/graft_spread_head.py against the checkpoint
+# below to verify the graft (added keys == out_proj_spread.*, every inherited
+# tensor byte-identical) -- from_pretrained's strict=False silently loads a
+# randomly-initialized head on a typo'd/renamed key (§7.A.1).
+_target_: moiraix.model.MoiraiXPretrain
+module:
+  _target_: moiraix.model.MoiraiXModule.from_pretrained
+  pretrained_model_name_or_path: /srv/disk00/ctadler/moiraix/outputs/uni2ts/moiraix/gift_eval_pretrain_trackb_p30_nosde_gift/moiraix_enc_cpm_arcsinh_0/HF_checkpoints/last
+  num_spread_token: 16
+  dropout_p: 0.0
+  attn_dropout_p: 0.0
+# `module` (a prebuilt module, not module_kwargs) is set above, so
+# MoiraiXPretrain never reads module_kwargs -- but conf/pretrain/default.yaml's
+# train/val_dataloader collate_fn.max_length interpolates
+# ${model.module_kwargs.max_seq_len} unconditionally, which raises
+# InterpolationKeyError without this stub (caught when actually launching this
+# config end-to-end -- hydra.utils.instantiate(cfg.model) alone doesn't
+# exercise this path). Value must match the grafted checkpoint's real
+# max_seq_len (512).
+module_kwargs:
+  max_seq_len: 512
+# everything below must reproduce the ORIGINAL run's data recipe -- the head is
+# learning a readout of this trunk, so a different mask/patch regime teaches it
+# to read a distribution the trunk was never trained on.
+min_patches: 2
+min_mask_ratio: 0.15
+max_mask_ratio: 0.5
+cpm_pred_c_mask_max: 4
+cpm_pred_p_mask_max: 0
+cpm_c_mask_max: 4
+cpm_p_mask_max: 0
+max_dim: 128
+val_min_mask_ratio: 0.3
+val_max_mask_ratio: 0.3
+freeze_pattern: spread_head
+freeze_unlock_last_n_layers: 0
+train_spread_only: true
+loss_func:
+  _target_: moiraix.loss.packed.PackedQuantileMTPLoss
+  shift: false
+spread_loss_func:
+  _target_: moiraix.loss.packed.PackedQuantileSpreadLoss
+  shift: false
+spread_loss_weight: 1.0
+num_spread_positions: 32  # head-only => cheap => afford more anchors per row
+val_metric:
+  _target_: moiraix.loss.packed.PackedNMAELoss
+lr: 1e-3  # a fresh head on a frozen trunk wants a real LR
+weight_decay: 5e-2
+beta1: 0.9
+beta2: 0.98
+num_training_steps: ${mul:${trainer.max_epochs},${train_dataloader.num_batches_per_epoch}}
+num_warmup_steps: 500  # not 10_000 -- this run is ~10-20k steps total
+log_on_step: true

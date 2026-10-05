@@ -1,0 +1,673 @@
+# gift_eval_pretrain_scale_v1: the Track C data-SCALE mixture (derived from gift_eval_pretrain_trackb_p30_nosde_gift).
+#
+# Rationale, and the audit that motivated it, are in the module docstring of
+# scripts/gen_scale_v1_config.py. In one line: the 400M run tied the 30M run
+# because 80 epochs consumed ~1.34T observations of which only ~50B were
+# unique (~27x repetition) -- the cap-based weighting made 82% of the on-disk
+# corpus (ERA5+CMIP6) unreachable while recycling a 0.165B split 812 times.
+#
+# Block shares (sampling share = num_ts*weight / sum):
+#   core_real  target 40.0%   achieved 40.0%
+#   climate    target 12.0%   achieved 12.0%
+#   synth      target 27.0%   achieved 27.0%
+#   rmisc      target  8.0%   achieved  8.0%
+#   tsmixup    target  8.0%   achieved  8.0%
+#   gift       target  5.0%   achieved  5.0%
+# Total 6,905,470 effective windows.
+# Within core_real/climate/tsmixup/gift the base config's relative weights are
+# preserved exactly (one common rescale each). synth is split proportional to
+# unique observations; rmisc by num_ts**0.5.
+#
+# Build the new corpora first: sbatch slurm/scripts/build_synth_scale_v1.sh
+# Regenerate: python scripts/gen_scale_v1_config.py --climate 0.12 --rmisc 0.08 --synth 0.27 --tsmixup 0.08 --gift 0.05
+# Tests: test/data/test_scale_v1_weights.py
+_target_: moiraix.data.builder.ConcatDatasetBuilder
+_args_:
+  - _target_: moiraix.data.builder.lotsa_v1.Buildings900KDatasetBuilder
+    datasets:
+      - buildings_900k
+    weight_map:
+      buildings_900k: 0.0704971317
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.BuildingsBenchDatasetBuilder
+    datasets:
+      - lcl
+      - bdg-2_rat
+      - bdg-2_fox
+      - bdg-2_bear
+      - ideal
+      - bdg-2_panther
+      - smart
+      - borealis
+      - sceaux
+    weight_map:
+      lcl: 61.2245152
+      bdg-2_rat: 77.2414975
+      bdg-2_fox: 78.7613736
+      bdg-2_bear: 74.5080208
+      ideal: 26.4591769
+      bdg-2_panther: 40.0690366
+      smart: 87.556334
+      borealis: 25.3919986
+      sceaux: 156.539114
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.CloudOpsTSFDatasetBuilder
+    datasets:
+      - azure_vm_traces_2017
+      - borg_cluster_data_2011
+      - alibaba_cluster_trace_2018
+    weight_map:
+      azure_vm_traces_2017: 0.793621443
+      borg_cluster_data_2011: 0.882655201
+      alibaba_cluster_trace_2018: 2.16679619
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.CMIP6DatasetBuilder
+    datasets:
+      - cmip6_1850
+      - cmip6_1855
+      - cmip6_1860
+      - cmip6_1865
+      - cmip6_1870
+      - cmip6_1875
+      - cmip6_1880
+      - cmip6_1885
+      - cmip6_1890
+      - cmip6_1895
+      - cmip6_1900
+      - cmip6_1905
+      - cmip6_1910
+      - cmip6_1915
+      - cmip6_1920
+      - cmip6_1925
+      - cmip6_1930
+      - cmip6_1935
+      - cmip6_1940
+      - cmip6_1945
+      - cmip6_1950
+      - cmip6_1955
+      - cmip6_1960
+      - cmip6_1965
+      - cmip6_1970
+      - cmip6_1975
+      - cmip6_1980
+      - cmip6_1985
+      - cmip6_1990
+      - cmip6_1995
+      - cmip6_2000
+      - cmip6_2005
+      - cmip6_2010
+    weight_map:
+      cmip6_1850: 1.45965862
+      cmip6_1855: 1.45965862
+      cmip6_1860: 1.45965862
+      cmip6_1865: 1.45965862
+      cmip6_1870: 1.45965862
+      cmip6_1875: 1.45965862
+      cmip6_1880: 1.45965862
+      cmip6_1885: 1.45965862
+      cmip6_1890: 1.45965862
+      cmip6_1895: 1.45965862
+      cmip6_1900: 1.45965862
+      cmip6_1905: 1.45965862
+      cmip6_1910: 1.45965862
+      cmip6_1915: 1.45965862
+      cmip6_1920: 1.45965862
+      cmip6_1925: 1.45965862
+      cmip6_1930: 1.45965862
+      cmip6_1935: 1.45965862
+      cmip6_1940: 1.45965862
+      cmip6_1945: 1.45965862
+      cmip6_1950: 1.45965862
+      cmip6_1955: 1.45965862
+      cmip6_1960: 1.45965862
+      cmip6_1965: 1.45965862
+      cmip6_1970: 1.45965862
+      cmip6_1975: 1.45965862
+      cmip6_1980: 1.45965862
+      cmip6_1985: 1.45965862
+      cmip6_1990: 1.45965862
+      cmip6_1995: 1.45965862
+      cmip6_2000: 1.45965862
+      cmip6_2005: 1.45965862
+      cmip6_2010: 1.45965862
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.ERA5DatasetBuilder
+    datasets:
+      - era5_1989
+      - era5_1990
+      - era5_1991
+      - era5_1992
+      - era5_1993
+      - era5_1994
+      - era5_1995
+      - era5_1996
+      - era5_1997
+      - era5_1998
+      - era5_1999
+      - era5_2000
+      - era5_2001
+      - era5_2002
+      - era5_2003
+      - era5_2004
+      - era5_2005
+      - era5_2006
+      - era5_2007
+      - era5_2008
+      - era5_2009
+      - era5_2010
+      - era5_2011
+      - era5_2012
+      - era5_2013
+      - era5_2014
+      - era5_2015
+      - era5_2016
+      - era5_2017
+      - era5_2018
+    weight_map:
+      era5_1989: 1.76618693
+      era5_1990: 1.76618693
+      era5_1991: 1.76618693
+      era5_1992: 1.76618693
+      era5_1993: 1.76618693
+      era5_1994: 1.76618693
+      era5_1995: 1.76618693
+      era5_1996: 1.76618693
+      era5_1997: 1.76618693
+      era5_1998: 1.76618693
+      era5_1999: 1.76618693
+      era5_2000: 1.76618693
+      era5_2001: 1.76618693
+      era5_2002: 1.76618693
+      era5_2003: 1.76618693
+      era5_2004: 1.76618693
+      era5_2005: 1.76618693
+      era5_2006: 1.76618693
+      era5_2007: 1.76618693
+      era5_2008: 1.76618693
+      era5_2009: 1.76618693
+      era5_2010: 1.76618693
+      era5_2011: 1.76618693
+      era5_2012: 1.76618693
+      era5_2013: 1.76618693
+      era5_2014: 1.76618693
+      era5_2015: 1.76618693
+      era5_2016: 1.76618693
+      era5_2017: 1.76618693
+      era5_2018: 1.76618693
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.GluonTSDatasetBuilder
+    datasets:
+      - extended_web_traffic_with_missing
+      - london_smart_meters_with_missing
+      - m5
+      - taxi_30min
+      - weather
+      - wiki-rolling_nips
+      - wind_farms_with_missing
+      - kaggle_web_traffic_weekly
+      - traffic_hourly
+      - solar_power
+      - wind_power
+      - pedestrian_counts
+      - australian_electricity_demand
+      - uber_tlc_hourly
+      - rideshare_with_missing
+      - oikolab_weather
+      - covid_mobility
+      - monash_m3_monthly
+      - tourism_monthly
+      - traffic_weekly
+      - bitcoin_with_missing
+      - nn5_daily_with_missing
+      - fred_md
+      - sunspot_with_missing
+      - uber_tlc_daily
+      - tourism_quarterly
+      - vehicle_trips_with_missing
+      - elecdemand
+      - monash_m3_other
+      - nn5_weekly
+      - cif_2016_12
+    weight_map:
+      extended_web_traffic_with_missing: 0.872451271
+      london_smart_meters_with_missing: 22.9276085
+      m5: 4.15088221
+      taxi_30min: 1.86162036
+      weather: 42.0466441
+      wiki-rolling_nips: 2.65464916
+      wind_farms_with_missing: 375.550145
+      kaggle_web_traffic_weekly: 0.521446367
+      traffic_hourly: 79.4794042
+      solar_power: 33835.5661
+      wind_power: 33835.2231
+      pedestrian_counts: 216.975608
+      australian_electricity_demand: 1055.31962
+      uber_tlc_hourly: 19.7182426
+      rideshare_with_missing: 1.70613592
+      oikolab_weather: 457.669817
+      covid_mobility: 1.87767697
+      monash_m3_monthly: 0.454391732
+      tourism_monthly: 1.25595039
+      traffic_weekly: 0.43911273
+      bitcoin_with_missing: 20.8166879
+      nn5_daily_with_missing: 3.36195684
+      fred_md: 3.27504911
+      sunspot_with_missing: 337.997876
+      uber_tlc_daily: 0.822061909
+      tourism_quarterly: 0.41914527
+      vehicle_trips_with_missing: 0.452014725
+      elecdemand: 80.1380733
+      monash_m3_other: 0.31369326
+      nn5_weekly: 0.480279549
+      cif_2016_12: 0.457489341
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.LargeSTDatasetBuilder
+    datasets:
+      - largest_2019
+      - largest_2020
+      - largest_2021
+      - largest_2018
+      - largest_2017
+    weight_map:
+      largest_2019: 0.597927852
+      largest_2020: 0.597927852
+      largest_2021: 0.597927852
+      largest_2018: 0.597927852
+      largest_2017: 0.597927852
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.LibCityDatasetBuilder
+    datasets:
+      - Q-TRAFFIC
+      - PEMS07
+      - PEMS_BAY
+      - PEMS03
+      - LOS_LOOP
+      - PEMS04
+      - PEMS08
+      - SHMETRO
+      - BEIJING_SUBWAY_30MIN
+      - HZMETRO
+    weight_map:
+      Q-TRAFFIC: 2.80323378
+      PEMS07: 129.099143
+      PEMS_BAY: 238.438213
+      PEMS03: 119.877775
+      LOS_LOOP: 156.763245
+      PEMS04: 77.7229533
+      PEMS08: 81.6749679
+      SHMETRO: 40.2931671
+      BEIJING_SUBWAY_30MIN: 7.19047096
+      HZMETRO: 10.8726142
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.OthersLOTSADatasetBuilder
+    datasets:
+      - favorita_sales
+      - residential_load_power
+      - residential_pv_power
+      - china_air_quality
+      - kdd2022
+      - project_tycho
+      - beijing_air_quality
+      - godaddy
+      - favorita_transactions
+      - cdc_fluview_ilinet
+      - cdc_fluview_who_nrevss
+    weight_map:
+      favorita_sales: 1.13162016
+      residential_load_power: 467.012541
+      residential_pv_power: 543.177677
+      china_air_quality: 60.0727191
+      kdd2022: 161.373894
+      project_tycho: 5.00934587
+      beijing_air_quality: 160.385925
+      godaddy: 0.187537729
+      favorita_transactions: 7.14981237
+      cdc_fluview_ilinet: 3.89730845
+      cdc_fluview_who_nrevss: 2.58127078
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.ProEnFoDatasetBuilder
+    datasets:
+      - gfc12_load
+      - bull
+      - hog
+      - gfc17_load
+      - spain
+      - covid19_energy
+      - elf
+      - cockatoo
+      - gfc14_load
+      - pdb
+    weight_map:
+      gfc12_load: 180.28322
+      bull: 80.2478515
+      hog: 80.2478515
+      gfc17_load: 80.2478515
+      spain: 160.385925
+      covid19_energy: 145.96839
+      elf: 99.6785898
+      cockatoo: 80.2478515
+      gfc14_load: 80.1380733
+      pdb: 80.1380733
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SubseasonalDatasetBuilder
+    datasets:
+      - subseasonal
+      - subseasonal_precip
+    weight_map:
+      subseasonal: 75.3352778
+      subseasonal_precip: 51.7924317
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.ChronosSyntheticDatasetBuilder
+    datasets:
+      - chronos_tsmixup_10m
+      - chronos_kernel_synth_1m
+    weight_map:
+      chronos_tsmixup_10m: 0.0552437581
+      chronos_kernel_synth_1m: 0.0463786254
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthStressDatasetBuilder
+    datasets:
+      - synth_stress_v0
+    weight_map:
+      synth_stress_v0: 0.138749501
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthBackboneDatasetBuilder
+    datasets:
+      - synth_backbone_v0
+    weight_map:
+      synth_backbone_v0: 0.138686354
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthSarima2DatasetBuilder
+    datasets:
+      - synth_sarima2_v0
+    weight_map:
+      synth_sarima2_v0: 0.138742017
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.GiftEvalTrainSplitDatasetBuilder
+    datasets:
+      - gift_eval_train_split
+    weight_map:
+      gift_eval_train_split: 3.55303712
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthBackboneV1DatasetBuilder
+    datasets:
+      - synth_backbone_v1
+    weight_map:
+      synth_backbone_v1: 0.46115939
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthStressV1DatasetBuilder
+    datasets:
+      - synth_stress_v1
+    weight_map:
+      synth_stress_v1: 0.461412464
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthSarima2V1DatasetBuilder
+    datasets:
+      - synth_sarima2_v1
+    weight_map:
+      synth_sarima2_v1: 0.46131497
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.SynthMixedV1DatasetBuilder
+    datasets:
+      - synth_mixed_v1
+    weight_map:
+      synth_mixed_v1: 0.461479935
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]
+  - _target_: moiraix.data.builder.lotsa_v1.RMISCDatasetBuilder
+    datasets:
+      - rmisc_AzurePublicDatasetV2
+      - rmisc_CSE-CIC-IDS2018
+      - rmisc_StockFactorsCleaned
+      - rmisc_Tigge
+      - rmisc_TushareStockDailyMetrics
+      - rmisc_TushareStockDaily
+      - rmisc_TushareStockWeekly
+      - rmisc_T-Drive
+      - rmisc_TushareETFDaily
+      - rmisc_SmartMeterAus30m
+      - rmisc_SmartMeterAus60m
+      - rmisc_OilWell
+      - rmisc_StarLightCurves
+      - rmisc_TushareIndexDaily
+      - rmisc_Rebound
+      - rmisc_Rossmann_1W
+      - rmisc_ChengduTaxi
+      - rmisc_ChinaMinuteStock
+      - rmisc_BoschCNC
+      - rmisc_FordA
+      - rmisc_BTS
+      - rmisc_CSI500
+      - rmisc_GlobalClimateChange
+      - rmisc_SP500
+      - rmisc_SP500KnownOpen
+      - rmisc_USAirPollution
+      - rmisc_Rossmann_1D
+      - rmisc_AMarketChina
+      - rmisc_AMarketChinaKnownOpen
+      - rmisc_MotionSense
+      - rmisc_EigenWorms
+      - rmisc_CinCECGTorso
+      - rmisc_Dominick
+      - rmisc_KeplerLightCurves
+      - rmisc_BrainInvadersBi2014b
+      - rmisc_XiamenAirQuality
+      - rmisc_UKEconomy
+      - rmisc_ServerMachineDataset
+      - rmisc_MotorTemperature
+      - rmisc_BCI_Competetion_IV_1
+      - rmisc_WISDM_V2
+      - rmisc_InlineSkate
+      - rmisc_EMG4Gestures
+      - rmisc_OPSD-When2Heat
+      - rmisc_OPSD
+      - rmisc_WISDM_V3
+      - rmisc_Computers
+      - rmisc_NIFTYStock
+      - rmisc_NIFTYStockKnownOpen
+      - rmisc_PAMAP2
+      - rmisc_StockMarketData
+      - rmisc_BCI_Competetion_IV_2a
+      - rmisc_GasSensorTemperature
+      - rmisc_Worms
+      - rmisc_LBNL
+      - rmisc_OPSD-Household
+      - rmisc_ACSF1
+      - rmisc_WADI
+      - rmisc_WISDM_V1
+      - rmisc_OPSD-PV-Wind
+      - rmisc_BCI_Competetion_IV_2b
+      - rmisc_BatteryRUL
+      - rmisc_HAR70Plus
+      - rmisc_Car
+      - rmisc_CausalEffects
+      - rmisc_CSTSNonnormalTrain
+      - rmisc_CSTSNormalTrain
+      - rmisc_PUMP
+      - rmisc_HARTH
+      - rmisc_MZVAV
+      - rmisc_SmellSensor
+      - rmisc_WindElec
+      - rmisc_HetergeneousHAR
+      - rmisc_SWAT
+      - rmisc_BooksPerPerson
+      - rmisc_Satellite
+      - rmisc_Rohlik_orders_1W
+      - rmisc_MiniApp
+      - rmisc_PM25FiveCities
+      - rmisc_NAB
+      - rmisc_UK-DALE
+      - rmisc_IndoorLocalisation
+      - rmisc_GasSensorDynamic
+      - rmisc_Rohlik_orders_1D
+      - rmisc_TimeMMD
+      - rmisc_ApplianceEnergy
+      - rmisc_EbayServer
+      - rmisc_HungarianChickenpoxCases
+      - rmisc_WeeklyFuelPricesItaly
+      - rmisc_Cryptocurrency
+      - rmisc_CryptocurrencyKnownOpen
+      - rmisc_OccupancyDetection
+      - rmisc_RoomOccupancy
+      - rmisc_ShellHackathon
+      - rmisc_FrothFlotation
+      - rmisc_ERCOT
+      - rmisc_BritainCoal
+      - rmisc_ExchangeRate
+      - rmisc_TetuanPowerConsumption
+      - rmisc_GasPipeline
+      - rmisc_HouseholdPower
+      - rmisc_Metropt3
+      - rmisc_Gait
+      - rmisc_MetroTraffic
+      - rmisc_AliCar
+      - rmisc_WeeklyRoadFuelPrices
+    weight_map:
+      rmisc_AzurePublicDatasetV2: 0.115917652
+      rmisc_CSE-CIC-IDS2018: 0.1406544
+      rmisc_StockFactorsCleaned: 0.156382942
+      rmisc_Tigge: 0.243989575
+      rmisc_TushareStockDailyMetrics: 0.380703736
+      rmisc_TushareStockDaily: 0.430664447
+      rmisc_TushareStockWeekly: 0.435475111
+      rmisc_T-Drive: 0.673188976
+      rmisc_TushareETFDaily: 0.699408115
+      rmisc_SmartMeterAus30m: 0.804608863
+      rmisc_SmartMeterAus60m: 0.804696781
+      rmisc_OilWell: 0.975021687
+      rmisc_StarLightCurves: 0.981020581
+      rmisc_TushareIndexDaily: 1.15604997
+      rmisc_Rebound: 1.21715099
+      rmisc_Rossmann_1W: 1.24408677
+      rmisc_ChengduTaxi: 1.29699612
+      rmisc_ChinaMinuteStock: 1.30742989
+      rmisc_BoschCNC: 1.34370881
+      rmisc_FordA: 1.34398183
+      rmisc_BTS: 1.72418748
+      rmisc_CSI500: 1.73967494
+      rmisc_GlobalClimateChange: 1.85685771
+      rmisc_SP500: 1.88976427
+      rmisc_SP500KnownOpen: 1.88976427
+      rmisc_USAirPollution: 1.96246617
+      rmisc_Rossmann_1D: 1.99649235
+      rmisc_AMarketChina: 2.22220351
+      rmisc_AMarketChinaKnownOpen: 2.22220351
+      rmisc_MotionSense: 2.2759433
+      rmisc_EigenWorms: 2.3916332
+      rmisc_CinCECGTorso: 2.50193434
+      rmisc_Dominick: 2.606851
+      rmisc_KeplerLightCurves: 2.68170404
+      rmisc_BrainInvadersBi2014b: 2.70366758
+      rmisc_XiamenAirQuality: 2.78744989
+      rmisc_UKEconomy: 2.81841562
+      rmisc_ServerMachineDataset: 3.21679584
+      rmisc_MotorTemperature: 3.27646032
+      rmisc_BCI_Competetion_IV_1: 3.28042458
+      rmisc_WISDM_V2: 3.48469314
+      rmisc_InlineSkate: 3.69797016
+      rmisc_EMG4Gestures: 3.70367251
+      rmisc_OPSD-When2Heat: 3.76819106
+      rmisc_OPSD: 3.79865389
+      rmisc_WISDM_V3: 3.81416499
+      rmisc_Computers: 4.27663264
+      rmisc_NIFTYStock: 4.41507067
+      rmisc_NIFTYStockKnownOpen: 4.41507067
+      rmisc_PAMAP2: 4.90802649
+      rmisc_StockMarketData: 5.03948386
+      rmisc_BCI_Competetion_IV_2a: 5.13576485
+      rmisc_GasSensorTemperature: 5.84700422
+      rmisc_Worms: 5.86962327
+      rmisc_LBNL: 6.13711243
+      rmisc_OPSD-Household: 6.60092802
+      rmisc_ACSF1: 6.66661052
+      rmisc_WADI: 7.59730778
+      rmisc_WISDM_V1: 7.93981758
+      rmisc_OPSD-PV-Wind: 7.99673457
+      rmisc_BCI_Competetion_IV_2b: 8.30090084
+      rmisc_BatteryRUL: 8.39913977
+      rmisc_HAR70Plus: 8.39913977
+      rmisc_Car: 8.60655717
+      rmisc_CausalEffects: 9.42801101
+      rmisc_CSTSNonnormalTrain: 9.9379962
+      rmisc_CSTSNormalTrain: 9.9379962
+      rmisc_PUMP: 10.0502935
+      rmisc_HARTH: 10.7442157
+      rmisc_MZVAV: 10.7442157
+      rmisc_SmellSensor: 11.1889905
+      rmisc_WindElec: 11.6940084
+      rmisc_HetergeneousHAR: 11.8781774
+      rmisc_SWAT: 11.973586
+      rmisc_BooksPerPerson: 12.1715099
+      rmisc_Satellite: 12.2742249
+      rmisc_Rohlik_orders_1W: 12.4877056
+      rmisc_MiniApp: 12.9503691
+      rmisc_PM25FiveCities: 13.201856
+      rmisc_NAB: 13.7521675
+      rmisc_UK-DALE: 14.054449
+      rmisc_IndoorLocalisation: 14.5477368
+      rmisc_GasSensorDynamic: 15.7133517
+      rmisc_Rohlik_orders_1D: 15.7133517
+      rmisc_TimeMMD: 16.4120606
+      rmisc_ApplianceEnergy: 18.4898508
+      rmisc_EbayServer: 18.4898508
+      rmisc_HungarianChickenpoxCases: 21.0816735
+      rmisc_WeeklyFuelPricesItaly: 21.0816735
+      rmisc_Cryptocurrency: 24.3430197
+      rmisc_CryptocurrencyKnownOpen: 24.3430197
+      rmisc_OccupancyDetection: 24.3430197
+      rmisc_RoomOccupancy: 24.3430197
+      rmisc_ShellHackathon: 24.3430197
+      rmisc_FrothFlotation: 26.1485978
+      rmisc_ERCOT: 28.4265228
+      rmisc_BritainCoal: 29.8139886
+      rmisc_ExchangeRate: 33.3330526
+      rmisc_TetuanPowerConsumption: 33.3330526
+      rmisc_GasPipeline: 35.6345321
+      rmisc_HouseholdPower: 35.6345321
+      rmisc_Metropt3: 35.6345321
+      rmisc_Gait: 42.163347
+      rmisc_MetroTraffic: 42.163347
+      rmisc_AliCar: 66.6661052
+      rmisc_WeeklyRoadFuelPrices: 66.6661052
+    sample_time_series:
+      _target_: moiraix.data.dataset.SampleTimeSeriesType
+      _args_: ["proportional"]

@@ -1,0 +1,83 @@
+# Mode A (HANDOFF_SPREAD_HEAD.md §7.A): graft a spread head onto the causal-NTP
+# decoder checkpoint `moiraix_dec_ntp_gift` and train ONLY the head, trunk
+# frozen. Decoder twin of moiraix_spread_headonly.yaml (which grafts onto the
+# bidirectional-encoder arcsinh checkpoint instead) -- per §12/gotcha 12, the
+# spread head is *most* valuable on causal-NTP checkpoints, since AR quantile
+# propagation compounds worst there.
+#
+# num_spread_token=64 (1024 steps at patch_size 16) is 4x the handoff's
+# suggested starting point of 16 -- verified no correctness issue at this size
+# for short series (both training-time packing-boundary masking and
+# inference-time J=min(num_spread_token, Pr) fallback were smoke-tested with
+# series far shorter than 64 patches; see conversation notes). It does cost
+# ~9.7M extra params (vs ~2.6M at nst=16) on top of the ~37M decoder.
+#
+# Run through the *pretrain* CLI entry point, not finetune -- MoiraiXPretrain
+# is reused as-is (it accepts a prebuilt `module`), and the data/val_data
+# groups below (the exact recipe moiraix_dec_ntp_gift was trained with) only
+# resolve under `-cp conf/pretrain`. See slurm/scripts/train_moiraix_dec_spread_headonly.sh.
+#
+# Before launching, run scripts/graft_spread_head.py against the checkpoint
+# below to verify the graft (added keys == out_proj_spread.*, every inherited
+# tensor byte-identical) -- from_pretrained's strict=False silently loads a
+# randomly-initialized head on a typo'd/renamed key (§7.A.1). Already verified
+# once for num_spread_token=64 (9,718,272 new params; 109 pretrained tensors
+# byte-identical).
+_target_: moiraix.model.MoiraiXPretrain
+module:
+  _target_: moiraix.model.MoiraiXModule.from_pretrained
+  pretrained_model_name_or_path: /srv/disk00/ctadler/moiraix/outputs/uni2ts/moiraix/gift_eval_pretrain_trackb_p30_nosde_gift/moiraix_dec_ntp_gift_0/HF_checkpoints/last
+  num_spread_token: 64
+  dropout_p: 0.0
+  attn_dropout_p: 0.0
+# `module` (a prebuilt module, not module_kwargs) is set above, so
+# MoiraiXPretrain never reads module_kwargs -- but
+# conf/pretrain/default.yaml's train/val_dataloader collate_fn.max_length
+# interpolates ${model.module_kwargs.max_seq_len} unconditionally, which
+# raises InterpolationKeyError without this stub. Value must match the
+# grafted checkpoint's real max_seq_len (512).
+module_kwargs:
+  max_seq_len: 512
+# everything below must reproduce moiraix_dec_ntp_gift_0's ORIGINAL data recipe
+# (= cli/conf/pretrain/model/moiraix.yaml defaults, the causal-NTP control) --
+# the head is learning a readout of this trunk, so a different mask/patch
+# regime teaches it to read a distribution the trunk was never trained on.
+min_patches: 2
+min_mask_ratio: 0.6
+max_mask_ratio: 0.75
+patch_mask_ratio: 0
+cpm_pred_c_mask_max: 4
+cpm_pred_p_mask_max: 0
+cpm_c_mask_max: 4
+cpm_p_mask_max: 0
+val_min_mask_ratio: 0.3
+val_max_mask_ratio: 0.3
+val_cpm_pred_c_mask_max: 4
+val_cpm_pred_p_mask_max: 0
+val_cpm_c_mask_max: 4
+val_cpm_p_mask_max: 0
+max_dim: 128
+freeze_pattern: spread_head
+freeze_unlock_last_n_layers: 0
+train_spread_only: true
+loss_func:
+  _target_: moiraix.loss.packed.PackedQuantileMTPLoss
+  shift: true
+spread_loss_func:
+  _target_: moiraix.loss.packed.PackedQuantileSpreadLoss
+  shift: true
+spread_loss_weight: 1.0
+num_spread_positions: 32  # head-only => cheap => afford more anchors per row
+val_metric:
+  _target_: moiraix.loss.packed.PackedNMAELoss
+lr: 1e-3  # a fresh head on a frozen trunk wants a real LR
+weight_decay: 5e-2
+beta1: 0.9
+beta2: 0.98
+num_training_steps: ${mul:${trainer.max_epochs},${train_dataloader.num_batches_per_epoch}}
+# 1024-step smoke/de-risking run: set via trainer.max_epochs=1
+# train_dataloader.num_batches_per_epoch=1024 trainer.accumulate_grad_batches=1
+# at submit time (see the slurm launcher) so num_training_steps resolves to
+# exactly 1024 and the LR schedule matches.
+num_warmup_steps: 100
+log_on_step: true
